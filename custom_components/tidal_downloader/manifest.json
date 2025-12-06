@@ -1,0 +1,15 @@
+{
+  "domain": "tidal_downloader",
+  "name": "Tidal Album Downloader",
+  "version": "1.0.0",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/your-repo/tidal-downloader",
+  "iot_class": "cloud_polling",
+  "requirements": [
+    "tidalapi>=0.8.8",
+    "tidal-dl-ng>=0.31.4",
+    "smbprotocol>=1.10.0"
+  ],
+  "dependencies": []
+}

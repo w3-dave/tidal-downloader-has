@@ -1,0 +1,33 @@
+sync_now:
+  name: Sync Now
+  description: Trigger an immediate sync of Tidal favourite albums
+
+force_download:
+  name: Force Download
+  description: Force download a specific album by ID (even if already downloaded)
+  fields:
+    album_id:
+      name: Album ID
+      description: The Tidal album ID to download
+      required: true
+      example: 123456789
+      selector:
+        number:
+          min: 1
+          mode: box
+
+clear_history:
+  name: Clear Download History
+  description: Clear the record of downloaded albums (allows re-downloading all favourites)
+
+fix_permissions:
+  name: Fix File Permissions
+  description: Set open permissions (777/666) on all downloaded files so they can be deleted/moved
+
+clear_local_files:
+  name: Clear Local Files
+  description: Delete all files and folders in the local temporary download directory
+
+clear_queue:
+  name: Clear Download Queue
+  description: Remove all pending albums from the download queue
