@@ -1,0 +1,97 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Link Your Tidal Account",
+        "description": "Visit **{url}** and enter code **{code}**\n\nThis code expires in {expires} minutes.\n\nClick Submit after you've authorized the app."
+      },
+      "options": {
+        "title": "Configure Download Settings",
+        "data": {
+          "download_path": "Local Download Path",
+          "audio_quality": "Audio Quality",
+          "poll_interval": "Polling Interval (minutes)",
+          "rate_limit_albums": "Max Albums per Period",
+          "rate_limit_hours": "Rate Limit Period (hours)",
+          "folder_template": "Folder Template",
+          "file_template": "File Naming Template",
+          "extract_flac": "Extract FLAC from MP4",
+          "download_lyrics": "Download Lyrics",
+          "download_cover": "Download Cover Art",
+          "smb_enabled": "Upload to SMB/NAS",
+          "smb_server": "SMB Server",
+          "smb_share": "SMB Share Name",
+          "smb_username": "SMB Username",
+          "smb_password": "SMB Password",
+          "smb_path": "SMB Path (subfolder)",
+          "smb_delete_after_upload": "Delete Local Files After Upload"
+        },
+        "data_description": {
+          "download_path": "Temporary local directory for downloads (also used if SMB disabled)",
+          "poll_interval": "How often to check Tidal for new favourite albums",
+          "rate_limit_albums": "Maximum number of albums to download within the rate limit period",
+          "rate_limit_hours": "Time period in hours for the rate limit",
+          "folder_template": "Use album_artist, album_title, album_year, album_id wrapped in curly braces",
+          "file_template": "Use album_track_num, track_title, artist_name, track_volume_num wrapped in curly braces",
+          "smb_enabled": "Enable uploading downloaded files to SMB/NAS share",
+          "smb_server": "IP address or hostname of your NAS (e.g., 192.168.1.100)",
+          "smb_share": "Name of the SMB share (e.g., Music)",
+          "smb_path": "Subfolder path within the share (e.g., Tidal). Leave empty for root.",
+          "smb_delete_after_upload": "Remove local album folder after successful SMB upload"
+        }
+      }
+    },
+    "error": {
+      "auth_failed": "Authentication failed. Please try again.",
+      "auth_pending": "Please complete authentication at the provided URL first.",
+      "invalid_path": "Invalid path. Directory does not exist or is not writable.",
+      "smb_connection_failed": "Failed to connect to SMB server. Check server, share, and credentials."
+    },
+    "abort": {
+      "already_configured": "Tidal account is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tidal Downloader Options",
+        "data": {
+          "download_path": "Local Download Path",
+          "audio_quality": "Audio Quality",
+          "poll_interval": "Polling Interval (minutes)",
+          "rate_limit_albums": "Max Albums per Period",
+          "rate_limit_hours": "Rate Limit Period (hours)",
+          "folder_template": "Folder Template",
+          "file_template": "File Naming Template",
+          "extract_flac": "Extract FLAC from MP4",
+          "download_lyrics": "Download Lyrics",
+          "download_cover": "Download Cover Art",
+          "smb_enabled": "Upload to SMB/NAS",
+          "smb_server": "SMB Server",
+          "smb_share": "SMB Share Name",
+          "smb_username": "SMB Username",
+          "smb_password": "SMB Password",
+          "smb_path": "SMB Path (subfolder)",
+          "smb_delete_after_upload": "Delete Local Files After Upload"
+        },
+        "data_description": {
+          "download_path": "Temporary local directory for downloads (also used if SMB disabled)",
+          "poll_interval": "How often to check Tidal for new favourite albums",
+          "rate_limit_albums": "Maximum number of albums to download within the rate limit period",
+          "rate_limit_hours": "Time period in hours for the rate limit",
+          "folder_template": "Use album_artist, album_title, album_year, album_id wrapped in curly braces",
+          "file_template": "Use album_track_num, track_title, artist_name, track_volume_num wrapped in curly braces",
+          "smb_enabled": "Enable uploading downloaded files to SMB/NAS share",
+          "smb_server": "IP address or hostname of your NAS (e.g., 192.168.1.100)",
+          "smb_share": "Name of the SMB share (e.g., Music)",
+          "smb_path": "Subfolder path within the share (e.g., Tidal). Leave empty for root.",
+          "smb_delete_after_upload": "Remove local album folder after successful SMB upload"
+        }
+      }
+    },
+    "error": {
+      "invalid_path": "Invalid path. Directory does not exist or is not writable.",
+      "smb_connection_failed": "Failed to connect to SMB server. Check server, share, and credentials."
+    }
+  }
+}
