@@ -1,8 +1,8 @@
-# Tidal Album Downloader for Home Assistant
+# 🎵 Tidal Album Downloader for Home Assistant
 
 A Home Assistant custom integration that automatically downloads your Tidal favourite albums to a local directory or NAS.
 
-## Features
+## ✨ Features
 
 - **Automatic Sync** - Monitors your Tidal favourites and automatically downloads new albums
 - **High Quality Audio** - Supports all Tidal quality tiers up to HiRes Lossless (24-bit/192kHz)
@@ -12,13 +12,13 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 - **Flexible Organization** - Customizable folder and filename templates
 - **Kill Switch** - Enable/disable downloads instantly via UI toggle
 
-## Requirements
+## 📋 Requirements
 
 - Home Assistant 2024.1 or newer
 - Tidal subscription (HiFi Plus required for HiRes quality)
 - FFmpeg (required for FLAC extraction, typically pre-installed on Home Assistant OS)
 
-## Installation
+## 📥 Installation
 
 ### HACS (Recommended)
 
@@ -34,7 +34,7 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 2. Copy it to your Home Assistant `config/custom_components/` directory
 3. Restart Home Assistant
 
-## Configuration
+## ⚙️ Configuration
 
 1. Go to **Settings** → **Devices & Services** → **Add Integration**
 2. Search for **Tidal Downloader**
@@ -81,7 +81,7 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 - `{track_title}` - Track title
 - `{artist_name}` - Track artist
 
-## Entities
+## 🎛️ Entities
 
 ### Sensors
 
@@ -111,7 +111,7 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 | **Clear Local Files** | Delete all local downloads |
 | **Fix File Permissions** | Set open permissions on downloaded files |
 
-## Services
+## 🔌 Services
 
 | Service | Description |
 |---------|-------------|
@@ -122,7 +122,7 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 | `tidal_downloader.clear_local_files` | Delete local files |
 | `tidal_downloader.fix_permissions` | Fix file permissions |
 
-## Audio Quality Notes
+## 🎧 Audio Quality Notes
 
 | Setting | Quality | Requirements |
 |---------|---------|--------------|
@@ -133,7 +133,7 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 
 **Note:** Actual quality depends on what's available for each album. Not all albums have HiRes versions.
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 ### Files downloading as M4A instead of FLAC
 - Ensure FFmpeg is installed and working (check the FFmpeg Status sensor)
@@ -154,13 +154,13 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 - The integration respects configurable rate limits to avoid API issues
 - Wait for the rate limit period to reset, or adjust settings
 
-## Dependencies
+## 📦 Dependencies
 
 - [tidalapi](https://github.com/tamland/python-tidal) (>=0.8.8) - Tidal API access
 - [tidal-dl-ng](https://github.com/exislow/tidal-dl-ng) (>=0.31.4) - Download engine
 - [smbprotocol](https://github.com/jborean93/smbprotocol) (>=1.10.0) - SMB/NAS support
 
-## Disclaimer
+## ⚠️ Disclaimer
 
 **This project is not affiliated with, endorsed by, or connected to Tidal or its parent companies in any way.** This is an independent, unofficial integration created for personal use.
 
@@ -181,11 +181,17 @@ THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPL
 
 If you are a rights holder and believe this project infringes on your intellectual property, please open an issue to discuss.
 
-## License
+## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgements
+## 🙏 Acknowledgements
 
 - [tidalapi](https://github.com/tamland/python-tidal) - Python API for Tidal
 - [tidal-dl-ng](https://github.com/exislow/tidal-dl-ng) - Tidal download engine
+
+## ☕ Support
+
+If you find this project useful and want to support its development, consider buying me a coffee!
+
+[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/w3dave)
