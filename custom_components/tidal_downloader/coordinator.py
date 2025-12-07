@@ -185,6 +185,11 @@ class TidalDownloaderCoordinator(DataUpdateCoordinator):
             else:
                 _LOGGER.warning("No new albums to download (all %d are downloaded or queued)", len(albums))
 
+            # Always try to resume queue processing in case items are waiting
+            # (e.g., from a previous rate limit that has now reset)
+            if self.download_manager:
+                await self.download_manager.resume_queue()
+
             self._last_sync = dt_util.now()
             self._sync_status = "idle"
 

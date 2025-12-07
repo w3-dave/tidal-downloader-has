@@ -449,7 +449,7 @@ class DownloadManager:
                         reset_time.isoformat() if reset_time else "unknown",
                         len(self._queue),
                     )
-                    # Stop processing - will resume on next sync
+                    # Stop processing - will resume on next sync via resume_queue()
                     break
 
                 task = self._queue.popleft()
@@ -603,6 +603,18 @@ class DownloadManager:
         except Exception as e:
             _LOGGER.error("tidal-dl-ng download failed for album %s: %s", album.id, e, exc_info=True)
             raise
+
+    async def resume_queue(self) -> None:
+        """Resume processing the queue if items are waiting and not already processing.
+
+        This should be called after each sync to ensure queued items (e.g., from
+        rate limiting) get processed once the rate limit resets.
+        """
+        if self._queue and not self._is_processing:
+            _LOGGER.warning(
+                "Resuming queue processing: %d albums waiting", len(self._queue)
+            )
+            self.hass.async_create_task(self._process_queue())
 
     async def force_download(self, album_id: int) -> None:
         """Force download a specific album (even if already downloaded)."""
