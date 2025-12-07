@@ -59,6 +59,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Connect download manager to coordinator
     coordinator.set_download_manager(download_manager)
 
+    # Clean up SMB staging folder (must be done after download_manager is set)
+    await coordinator.async_cleanup_smb_staging()
+
     # Store coordinator and download manager
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
