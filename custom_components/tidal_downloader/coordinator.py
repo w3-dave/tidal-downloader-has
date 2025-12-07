@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import logging
+import os
+import shutil
 from typing import Any, TYPE_CHECKING
 
 import tidalapi
@@ -26,6 +28,9 @@ from .const import (
     CONF_EXPIRY_TIME,
     CONF_POLL_INTERVAL,
     CONF_AUDIO_QUALITY,
+    CONF_DOWNLOAD_PATH,
+    CONF_SMB_ENABLED,
+    DEFAULT_DOWNLOAD_PATH,
     DEFAULT_POLL_INTERVAL,
     AudioQuality,
 )
@@ -94,8 +99,102 @@ class TidalDownloaderCoordinator(DataUpdateCoordinator):
         else:
             self._downloads_enabled = True
 
+        # Perform startup cleanup - delete incomplete downloads/uploads
+        await self._startup_cleanup()
+
         # Initialize Tidal session
         await self._initialize_session()
+
+    async def _startup_cleanup(self) -> None:
+        """Clean up incomplete downloads from previous session (local folder only).
+
+        On startup:
+        - Delete all contents of local download folder (it's temporary)
+        - Albums not in downloaded_albums will re-download on next sync
+
+        Note: SMB staging cleanup is done separately via async_cleanup_smb_staging()
+        after download_manager is initialized.
+        """
+        _LOGGER.warning("Performing startup cleanup (local folder)...")
+
+        # Clean up local download folder
+        download_path = self.entry_options.get(CONF_DOWNLOAD_PATH, DEFAULT_DOWNLOAD_PATH)
+        local_cleanup_count = await self.hass.async_add_executor_job(
+            self._cleanup_local_folder, download_path
+        )
+        if local_cleanup_count > 0:
+            _LOGGER.warning(
+                "Startup cleanup: Deleted %d items from local download folder",
+                local_cleanup_count,
+            )
+
+        _LOGGER.warning("Startup cleanup (local) complete")
+
+    async def async_cleanup_smb_staging(self) -> None:
+        """Clean up SMB staging folder (must be called after download_manager is set)."""
+        if not self.entry_options.get(CONF_SMB_ENABLED, False):
+            return
+
+        smb_cleanup_count = await self._cleanup_smb_staging()
+        if smb_cleanup_count > 0:
+            _LOGGER.warning(
+                "Startup cleanup: Deleted %d items from SMB staging folder",
+                smb_cleanup_count,
+            )
+
+    def _cleanup_local_folder(self, path: str) -> int:
+        """Delete all contents of local download folder (blocking). Returns count deleted."""
+        import stat
+
+        count = 0
+        try:
+            if not os.path.exists(path):
+                _LOGGER.debug("Local download path does not exist: %s", path)
+                return 0
+
+            for item in os.listdir(path):
+                item_path = os.path.join(path, item)
+                try:
+                    # Set permissions first to ensure we can delete
+                    if os.path.isdir(item_path):
+                        for root, dirs, files in os.walk(item_path):
+                            for d in dirs:
+                                try:
+                                    os.chmod(os.path.join(root, d), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                                except Exception:
+                                    pass
+                            for f in files:
+                                try:
+                                    os.chmod(os.path.join(root, f), stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+                                except Exception:
+                                    pass
+                        shutil.rmtree(item_path)
+                    else:
+                        os.chmod(item_path, stat.S_IRUSR | stat.S_IWUSR)
+                        os.remove(item_path)
+                    count += 1
+                    _LOGGER.debug("Startup cleanup: Deleted %s", item_path)
+                except Exception as e:
+                    _LOGGER.error("Failed to delete %s during startup cleanup: %s", item_path, e)
+        except Exception as e:
+            _LOGGER.error("Failed to clean up local folder: %s", e)
+
+        return count
+
+    async def _cleanup_smb_staging(self) -> int:
+        """Clean up SMB staging folder (incomplete uploads). Returns count deleted."""
+        if not self.download_manager:
+            _LOGGER.debug("Download manager not set, skipping SMB staging cleanup")
+            return 0
+
+        try:
+            count = await self.hass.async_add_executor_job(
+                self.download_manager.cleanup_smb_staging
+            )
+            return count
+        except Exception as e:
+            _LOGGER.error("Failed to clean up SMB staging folder: %s", e)
+            return 0
 
     async def _initialize_session(self) -> None:
         """Initialize or restore Tidal session."""

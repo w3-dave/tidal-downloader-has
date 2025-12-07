@@ -7,7 +7,8 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 - **Automatic Sync** - Monitors your Tidal favourites and automatically downloads new albums
 - **High Quality Audio** - Supports all Tidal quality tiers up to HiRes Lossless (24-bit/192kHz)
 - **FLAC Extraction** - Automatically extracts FLAC from M4A containers (requires FFmpeg)
-- **SMB/NAS Upload** - Optional automatic upload to network shares
+- **SMB/NAS Upload** - Optional automatic upload to network shares with atomic staging
+- **Resilient Transfers** - Automatic recovery from interrupted downloads and failed uploads
 - **Rate Limiting** - Configurable download limits to avoid API throttling
 - **Flexible Organization** - Customizable folder and filename templates
 - **Kill Switch** - Enable/disable downloads instantly via UI toggle
@@ -122,6 +123,40 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 | `tidal_downloader.clear_local_files` | Delete local files |
 | `tidal_downloader.fix_permissions` | Fix file permissions |
 
+## 🛡️ Reliability & Recovery
+
+The integration is designed to handle interruptions gracefully and ensure your NAS stays in sync with your Tidal collection.
+
+### Startup Cleanup
+
+On Home Assistant restart, the integration automatically:
+- Clears any incomplete downloads from the local staging folder
+- Removes any incomplete uploads from the SMB `.staging` folder
+- Albums that weren't fully synced will automatically re-download on the next sync cycle
+
+### SMB Staging Folder
+
+To prevent partial albums appearing on your NAS, uploads use a staging approach:
+1. Files are first uploaded to a `.staging` folder on the NAS
+2. Only when the upload is 100% complete, the album is moved to its final location
+3. If interrupted, the staging folder is cleaned up on next startup
+
+### NAS Unavailable Handling
+
+If the NAS is unavailable during upload:
+- Local files are kept intact
+- The album is **not** marked as downloaded (doesn't count against rate limit)
+- On the next sync cycle (default: 5 minutes), the upload is automatically retried
+- Retries continue each sync cycle until the NAS becomes available
+
+| Scenario | Behavior |
+|----------|----------|
+| HA restart mid-download | Local files cleared, album re-downloads |
+| HA restart mid-upload | Staging folder cleared, album re-downloads |
+| Tidal fails mid-download | Partial files cleaned up, retry on next sync |
+| NAS offline during upload | Local files kept, retry upload on next sync |
+| NAS stays offline | Continues retrying upload each sync cycle |
+
 ## 🎧 Audio Quality Notes
 
 | Setting | Quality | Requirements |
@@ -149,6 +184,19 @@ A Home Assistant custom integration that automatically downloads your Tidal favo
 - Check credentials are valid
 - Ensure the share name exists and is accessible
 - Check Home Assistant logs for detailed error messages
+- Look for files in the `.staging` folder on your NAS (indicates upload started but didn't complete)
+
+### Albums stuck in local folder
+- If SMB is enabled and albums remain in the local folder, the NAS upload likely failed
+- Check NAS connectivity and credentials
+- The integration will automatically retry uploads on each sync cycle
+- Check logs for "SMB upload FAILED" messages
+
+### Downloads failing / Tidal connection issues
+- If Tidal is unavailable or a download fails, partial files are automatically cleaned up
+- The album will be retried on the next sync cycle
+- Check logs for "Failed to download" messages with specific error details
+- Verify your Tidal session is still valid (may need to re-authenticate)
 
 ### Rate limit reached
 - The integration respects configurable rate limits to avoid API issues
