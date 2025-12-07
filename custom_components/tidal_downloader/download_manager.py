@@ -449,7 +449,7 @@ class DownloadManager:
                         reset_time.isoformat() if reset_time else "unknown",
                         len(self._queue),
                     )
-                    # Stop processing - will resume on next sync
+                    # Stop processing - will resume on next sync via resume_queue()
                     break
 
                 task = self._queue.popleft()
@@ -463,27 +463,27 @@ class DownloadManager:
                 except Exception:
                     pass
 
+                # Calculate paths before download (needed for both success and failure cleanup)
+                folder_template = self._options.get(
+                    CONF_FOLDER_TEMPLATE, DEFAULT_FOLDER_TEMPLATE
+                )
+                album_folder = folder_template.replace(
+                    "{album_artist}", artist_name
+                ).replace("{album_title}", task.album.name).replace(
+                    "{album_year}", str(task.album.year) if task.album.year else ""
+                ).replace("{album_id}", str(task.album.id))
+                local_album_path = f"{self._options.get(CONF_DOWNLOAD_PATH, DEFAULT_DOWNLOAD_PATH)}/{album_folder}"
+
                 _LOGGER.warning(
-                    "Starting download: %s - %s (album_id: %s)",
+                    "Starting download: %s - %s (album_id: %s) to %s",
                     artist_name,
                     task.album.name,
                     task.album.id,
+                    local_album_path,
                 )
 
                 try:
                     await self._download_album(task)
-                    task.status = "completed"
-
-                    # Set open permissions on downloaded files
-                    folder_template = self._options.get(
-                        CONF_FOLDER_TEMPLATE, DEFAULT_FOLDER_TEMPLATE
-                    )
-                    album_folder = folder_template.replace(
-                        "{album_artist}", artist_name
-                    ).replace("{album_title}", task.album.name).replace(
-                        "{album_year}", str(task.album.year) if task.album.year else ""
-                    ).replace("{album_id}", str(task.album.id))
-                    local_album_path = f"{self._options.get(CONF_DOWNLOAD_PATH, DEFAULT_DOWNLOAD_PATH)}/{album_folder}"
 
                     _LOGGER.warning(
                         "Post-download processing: local_album_path=%s, album_folder=%s",
@@ -491,29 +491,48 @@ class DownloadManager:
                         album_folder,
                     )
 
+                    # Set open permissions on downloaded files
                     await self.hass.async_add_executor_job(
                         self._set_open_permissions, local_album_path
                     )
 
                     # Upload to SMB if enabled
                     _LOGGER.warning("Checking SMB upload... calling _is_smb_enabled()")
+                    smb_success = True  # Default to True if SMB not enabled
                     if self._is_smb_enabled():
                         _LOGGER.warning("SMB is enabled, calling _upload_to_smb")
                         smb_success = await self._upload_to_smb(local_album_path, album_folder)
 
-                        # Delete local files after successful SMB upload if option enabled
-                        if smb_success and self._options.get(CONF_SMB_DELETE_AFTER_UPLOAD, False):
-                            _LOGGER.warning("SMB upload successful, deleting local files: %s", local_album_path)
-                            await self.hass.async_add_executor_job(
-                                self._delete_local_album, local_album_path
+                        if smb_success:
+                            # Delete local files after successful SMB upload if option enabled
+                            if self._options.get(CONF_SMB_DELETE_AFTER_UPLOAD, False):
+                                _LOGGER.warning("SMB upload successful, deleting local files: %s", local_album_path)
+                                await self.hass.async_add_executor_job(
+                                    self._delete_local_album, local_album_path
+                                )
+                        else:
+                            # SMB upload failed - keep local files for retry on next sync
+                            # Do NOT mark as downloaded, do NOT count against rate limit
+                            _LOGGER.warning(
+                                "SMB upload FAILED for %s - %s. Keeping local files for retry on next sync.",
+                                artist_name,
+                                task.album.name,
                             )
+                            task.status = "smb_failed"
+                            task.error = "SMB upload failed - will retry on next sync"
+                            # Skip marking as downloaded - will re-attempt on next sync
+                            self._current_task = None
+                            continue
                     else:
                         _LOGGER.warning("SMB upload NOT enabled, skipping")
+
+                    # Only mark as complete if SMB succeeded (or wasn't needed)
+                    task.status = "completed"
 
                     # Record download for rate limiting
                     self._record_download()
 
-                    # Notify coordinator
+                    # Notify coordinator (marks as downloaded)
                     if self._on_download_complete:
                         await self._on_download_complete(task.album.id)
 
@@ -534,6 +553,22 @@ class DownloadManager:
                         task.album.name,
                         e,
                     )
+
+                    # Clean up partial download files to ensure clean state for retry
+                    _LOGGER.warning(
+                        "Cleaning up partial download: %s",
+                        local_album_path,
+                    )
+                    try:
+                        await self.hass.async_add_executor_job(
+                            self._delete_local_album, local_album_path
+                        )
+                    except Exception as cleanup_error:
+                        _LOGGER.warning(
+                            "Could not clean up partial download %s: %s",
+                            local_album_path,
+                            cleanup_error,
+                        )
 
                 self._current_task = None
 
@@ -603,6 +638,18 @@ class DownloadManager:
         except Exception as e:
             _LOGGER.error("tidal-dl-ng download failed for album %s: %s", album.id, e, exc_info=True)
             raise
+
+    async def resume_queue(self) -> None:
+        """Resume processing the queue if items are waiting and not already processing.
+
+        This should be called after each sync to ensure queued items (e.g., from
+        rate limiting) get processed once the rate limit resets.
+        """
+        if self._queue and not self._is_processing:
+            _LOGGER.warning(
+                "Resuming queue processing: %d albums waiting", len(self._queue)
+            )
+            self.hass.async_create_task(self._process_queue())
 
     async def force_download(self, album_id: int) -> None:
         """Force download a specific album (even if already downloaded)."""
@@ -772,7 +819,13 @@ class DownloadManager:
         }
 
     async def _upload_to_smb(self, local_path: str, album_folder: str) -> bool:
-        """Upload downloaded album to SMB share. Returns True if successful."""
+        """Upload downloaded album to SMB share using staging folder. Returns True if successful.
+
+        Upload flow:
+        1. Upload to .staging/{album_folder}/ on SMB
+        2. When complete, move from .staging/{album_folder} to {album_folder}
+        3. If any step fails, return False (local files kept for retry)
+        """
         import os
 
         _LOGGER.warning("_upload_to_smb called with local_path=%s, album_folder=%s", local_path, album_folder)
@@ -805,7 +858,7 @@ class DownloadManager:
         _LOGGER.warning("Local path contains %d files to upload: %s", len(local_files), local_files[:5])
 
         _LOGGER.warning(
-            "Starting SMB upload: %s -> //%s/%s/%s/%s",
+            "Starting SMB upload (staging): %s -> //%s/%s/%s/.staging/%s",
             local_path,
             smb_config["server"],
             smb_config["share"],
@@ -813,26 +866,49 @@ class DownloadManager:
             album_folder,
         )
 
-        success = await self.hass.async_add_executor_job(
-            self._smb_upload_directory,
+        # Step 1: Upload to staging folder
+        staging_success = await self.hass.async_add_executor_job(
+            self._smb_upload_directory_to_staging,
             local_path,
             album_folder,
             smb_config,
         )
-        return success
 
-    def _smb_upload_directory(
+        if not staging_success:
+            _LOGGER.error("SMB staging upload failed - keeping local files for retry")
+            return False
+
+        # Step 2: Move from staging to final location
+        move_success = await self.hass.async_add_executor_job(
+            self._smb_move_from_staging,
+            album_folder,
+            smb_config,
+        )
+
+        if not move_success:
+            _LOGGER.error("SMB move from staging failed - will retry on next sync")
+            # Try to clean up the staging folder
+            await self.hass.async_add_executor_job(
+                self._smb_delete_staging_folder,
+                album_folder,
+                smb_config,
+            )
+            return False
+
+        _LOGGER.warning("SMB upload complete: %s", album_folder)
+        return True
+
+    def _smb_upload_directory_to_staging(
         self, local_path: str, album_folder: str, smb_config: dict[str, str]
     ) -> bool:
-        """Upload a directory to SMB share (blocking). Returns True if successful."""
+        """Upload a directory to SMB staging folder (blocking). Returns True if successful."""
         import os
         from pathlib import Path
 
-        _LOGGER.warning("_smb_upload_directory called (blocking) - local_path=%s", local_path)
+        _LOGGER.warning("_smb_upload_directory_to_staging called (blocking) - local_path=%s", local_path)
 
         try:
             from smbclient import register_session, makedirs, open_file
-            import smbclient
             _LOGGER.warning("smbclient imported successfully")
 
             # Register SMB session
@@ -844,16 +920,16 @@ class DownloadManager:
             )
             _LOGGER.warning("SMB session registered successfully")
 
-            # Build remote path including album folder structure
+            # Build remote path to STAGING folder
             base_path = smb_config["path"].strip("/") if smb_config["path"] else ""
             # Convert album_folder from forward slashes to backslashes for SMB path
             album_folder_smb = album_folder.replace("/", "\\")
             if base_path:
-                remote_base = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{base_path}\\{album_folder_smb}"
+                remote_base = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{base_path}\\.staging\\{album_folder_smb}"
             else:
-                remote_base = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{album_folder_smb}"
+                remote_base = f"\\\\{smb_config['server']}\\{smb_config['share']}\\.staging\\{album_folder_smb}"
 
-            _LOGGER.warning("SMB remote base path (with album folder): %s", remote_base)
+            _LOGGER.warning("SMB staging path: %s", remote_base)
 
             # Walk local directory and upload files
             local_base = Path(local_path)
@@ -866,12 +942,12 @@ class DownloadManager:
                 root_path = Path(root)
                 relative_path = root_path.relative_to(local_base)
 
-                # Create remote directory
+                # Create remote directory in staging
                 remote_dir = f"{remote_base}\\{str(relative_path).replace('/', '\\')}"
-                _LOGGER.warning("Creating remote directory: %s", remote_dir)
+                _LOGGER.warning("Creating remote staging directory: %s", remote_dir)
                 try:
                     makedirs(remote_dir, exist_ok=True)
-                    _LOGGER.warning("Remote directory created/verified: %s", remote_dir)
+                    _LOGGER.warning("Remote staging directory created/verified: %s", remote_dir)
                 except Exception as e:
                     _LOGGER.warning("Directory creation issue (may already exist): %s - %s", remote_dir, e)
 
@@ -880,7 +956,7 @@ class DownloadManager:
                     local_file = root_path / filename
                     remote_file = f"{remote_dir}\\{filename}"
 
-                    _LOGGER.warning("Uploading file: %s -> %s", local_file, remote_file)
+                    _LOGGER.warning("Uploading file to staging: %s -> %s", local_file, remote_file)
                     try:
                         with open(local_file, "rb") as src:
                             file_data = src.read()
@@ -888,12 +964,12 @@ class DownloadManager:
                             with open_file(remote_file, mode="wb") as dst:
                                 dst.write(file_data)
                         files_uploaded += 1
-                        _LOGGER.warning("Successfully uploaded: %s", remote_file)
+                        _LOGGER.warning("Successfully uploaded to staging: %s", remote_file)
                     except Exception as e:
                         files_failed += 1
-                        _LOGGER.error("Failed to upload %s: %s", filename, e, exc_info=True)
+                        _LOGGER.error("Failed to upload %s to staging: %s", filename, e, exc_info=True)
 
-            _LOGGER.warning("SMB upload complete: %d files uploaded, %d failed", files_uploaded, files_failed)
+            _LOGGER.warning("SMB staging upload complete: %d files uploaded, %d failed", files_uploaded, files_failed)
             # Consider success if at least some files uploaded and no failures
             return files_uploaded > 0 and files_failed == 0
 
@@ -901,8 +977,156 @@ class DownloadManager:
             _LOGGER.error("smbprotocol not installed - cannot upload to SMB")
             return False
         except Exception as e:
-            _LOGGER.error("SMB upload failed: %s", e, exc_info=True)
+            _LOGGER.error("SMB staging upload failed: %s", e, exc_info=True)
             return False
+
+    def _smb_move_from_staging(
+        self, album_folder: str, smb_config: dict[str, str]
+    ) -> bool:
+        """Move album from staging to final location on SMB (blocking). Returns True if successful."""
+        try:
+            from smbclient import register_session, rename, makedirs, listdir, stat as smb_stat
+            import smbclient
+            import stat
+
+            _LOGGER.warning("Moving album from staging to final location: %s", album_folder)
+
+            # Register SMB session
+            register_session(
+                smb_config["server"],
+                username=smb_config["username"],
+                password=smb_config["password"],
+            )
+
+            base_path = smb_config["path"].strip("/") if smb_config["path"] else ""
+            album_folder_smb = album_folder.replace("/", "\\")
+
+            if base_path:
+                staging_path = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{base_path}\\.staging\\{album_folder_smb}"
+                final_path = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{base_path}\\{album_folder_smb}"
+                # For nested album folders (artist/album), ensure parent directory exists
+                final_parent = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{base_path}\\{album_folder_smb.rsplit(chr(92), 1)[0]}" if "\\" in album_folder_smb else None
+            else:
+                staging_path = f"\\\\{smb_config['server']}\\{smb_config['share']}\\.staging\\{album_folder_smb}"
+                final_path = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{album_folder_smb}"
+                final_parent = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{album_folder_smb.rsplit(chr(92), 1)[0]}" if "\\" in album_folder_smb else None
+
+            _LOGGER.warning("Staging path: %s", staging_path)
+            _LOGGER.warning("Final path: %s", final_path)
+
+            # Ensure parent directory exists for final location
+            if final_parent:
+                try:
+                    makedirs(final_parent, exist_ok=True)
+                    _LOGGER.warning("Created parent directory: %s", final_parent)
+                except Exception as e:
+                    _LOGGER.warning("Parent directory may already exist: %s - %s", final_parent, e)
+
+            # Rename (move) from staging to final
+            try:
+                rename(staging_path, final_path)
+                _LOGGER.warning("Successfully moved from staging to final: %s", final_path)
+                return True
+            except Exception as e:
+                _LOGGER.error("Failed to move from staging to final: %s", e, exc_info=True)
+                return False
+
+        except ImportError:
+            _LOGGER.error("smbprotocol not installed - cannot move from staging")
+            return False
+        except Exception as e:
+            _LOGGER.error("SMB move from staging failed: %s", e, exc_info=True)
+            return False
+
+    def _smb_delete_staging_folder(
+        self, album_folder: str, smb_config: dict[str, str]
+    ) -> bool:
+        """Delete a specific album folder from staging (blocking). Returns True if successful."""
+        try:
+            from smbclient import register_session, rmtree
+
+            _LOGGER.warning("Deleting staging folder for: %s", album_folder)
+
+            register_session(
+                smb_config["server"],
+                username=smb_config["username"],
+                password=smb_config["password"],
+            )
+
+            base_path = smb_config["path"].strip("/") if smb_config["path"] else ""
+            album_folder_smb = album_folder.replace("/", "\\")
+
+            if base_path:
+                staging_path = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{base_path}\\.staging\\{album_folder_smb}"
+            else:
+                staging_path = f"\\\\{smb_config['server']}\\{smb_config['share']}\\.staging\\{album_folder_smb}"
+
+            try:
+                rmtree(staging_path)
+                _LOGGER.warning("Deleted staging folder: %s", staging_path)
+                return True
+            except Exception as e:
+                _LOGGER.warning("Could not delete staging folder (may not exist): %s - %s", staging_path, e)
+                return False
+
+        except ImportError:
+            _LOGGER.error("smbprotocol not installed")
+            return False
+        except Exception as e:
+            _LOGGER.error("Failed to delete staging folder: %s", e)
+            return False
+
+    def cleanup_smb_staging(self) -> int:
+        """Clean up entire SMB staging folder (for startup cleanup). Returns count deleted."""
+        if not self._is_smb_enabled():
+            return 0
+
+        smb_config = self._get_smb_config()
+        if not smb_config["server"] or not smb_config["share"]:
+            return 0
+
+        try:
+            from smbclient import register_session, rmtree, listdir
+
+            _LOGGER.warning("Cleaning up SMB staging folder")
+
+            register_session(
+                smb_config["server"],
+                username=smb_config["username"],
+                password=smb_config["password"],
+            )
+
+            base_path = smb_config["path"].strip("/") if smb_config["path"] else ""
+
+            if base_path:
+                staging_base = f"\\\\{smb_config['server']}\\{smb_config['share']}\\{base_path}\\.staging"
+            else:
+                staging_base = f"\\\\{smb_config['server']}\\{smb_config['share']}\\.staging"
+
+            # List contents of staging folder and delete each item
+            count = 0
+            try:
+                items = listdir(staging_base)
+                for item in items:
+                    item_path = f"{staging_base}\\{item}"
+                    try:
+                        rmtree(item_path)
+                        count += 1
+                        _LOGGER.warning("Deleted from staging: %s", item_path)
+                    except Exception as e:
+                        _LOGGER.error("Failed to delete %s from staging: %s", item_path, e)
+            except Exception as e:
+                # Staging folder may not exist, which is fine
+                _LOGGER.debug("Staging folder may not exist: %s - %s", staging_base, e)
+
+            return count
+
+        except ImportError:
+            _LOGGER.error("smbprotocol not installed - cannot clean up staging")
+            return 0
+        except Exception as e:
+            _LOGGER.error("Failed to clean up SMB staging: %s", e)
+            return 0
 
     def _delete_local_album(self, path: str) -> None:
         """Delete local album folder after successful SMB upload (blocking)."""
